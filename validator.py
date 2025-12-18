@@ -1,114 +1,157 @@
-import cv2
-import numpy as np
+import google.generativeai as genai
 from PIL import Image
+import io
 
 class ImageValidator:
     def __init__(self):
-        self.min_blur_score = 100.0  # Threshold for Laplacian Variance
-        self.min_brightness = 40     # Threshold for average brightness (0-255)
-        self.greenery_threshold = 0.05 # Minimum 5% green pixels for "Garden"
+        pass
 
-    def load_image(self, file_upload):
-        """Converts Streamlit UploadedFile to OpenCV format."""
-        file_bytes = np.asarray(bytearray(file_upload.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        # Reset file pointer for potential future reads
-        file_upload.seek(0)
-        return image
+    def validate_image(self, file_upload, yard_type, api_key):
+        """
+        Validates image using Google Gemini API for semantic understanding.
+        Checks for:
+        1. Realness (Not AI, Not Blurry)
+        2. Content (Garden/Yard visible)
+        3. Yard Type Mismatch (Front vs Back vs Side)
+        4. Prohibited Objects (People, Cars, Pets, Interiors)
+        """
+        if not api_key:
+            return {"valid": False, "error": "Google Gemini API Key is missing. Please enter it in the sidebar."}
 
-    def is_blurry(self, image):
-        """Checks if image is blurry using Laplacian variance."""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        score = cv2.Laplacian(gray, cv2.CV_64F).var()
-        return score < self.min_blur_score, score
+        # Configure API
+        genai.configure(api_key=api_key)
 
-    def is_dark(self, image):
-        """Checks if image is too dark."""
-        # Convert to HSV to check V channel brightness
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        brightness = np.mean(hsv[:, :, 2])
-        return brightness < self.min_brightness, brightness
-
-    def detect_greenery(self, image):
-        """Detects green vegetation using HSV color masking."""
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        
-        # Define range for green color in HSV
-        # Hue: 35-85, Saturation: 30-255, Value: 30-255
-        lower_green = np.array([35, 30, 30])
-        upper_green = np.array([85, 255, 255])
-        
-        mask = cv2.inRange(hsv, lower_green, upper_green)
-        green_ratio = np.sum(mask > 0) / mask.size
-        
-        return green_ratio > self.greenery_threshold, green_ratio
-
-    def detect_structure(self, image):
-        """Detects structural elements (lines) acting as a proxy for 'Home/Building' visibility."""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Blur to reduce noise
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
-        
-        # Detect lines using HoughLinesP
-        # minLineLength: Minimum length of line. Line segments shorter than this are rejected.
-        # maxLineGap: Maximum allowed gap between line segments to treat them as single line.
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
-        
-        if lines is None:
-            return False, 0
-        
-        # simple heuristic: count significant lines
-        line_count = len(lines)
-        # We assume a visible house/fence/pavement has at least a few straight lines
-        return line_count > 10, line_count
-
-    def validate_image(self, file_upload, yard_type="General"):
-        """Runs all checks on a single image."""
-        try:
-            image = self.load_image(file_upload)
-            if image is None:
-                return {"valid": False, "error": "Could not decode image."}
-
-            # 1. Blur Check
-            is_blur, blur_score = self.is_blurry(image)
-            if is_blur:
-                return {"valid": False, "error": f"{yard_type} image is too blurry. (Score: {blur_score:.1f})"}
-
-            # 2. Brightness Check
-            is_dark, brightness = self.is_dark(image)
-            if is_dark:
-                return {"valid": False, "error": f"{yard_type} image is too dark. (Brightness: {brightness:.1f})"}
-
-            # 3. Garden/Greenery Check
-            has_green, green_ratio = self.detect_greenery(image)
+        def get_working_model():
+            """
+            Attempts to find a working model from preferred list or available list.
+            """
+            preferred_models = [
+                "gemini-2.5-flash-lite",
+                "gemini-2.0-flash", 
+                "gemini-1.5-flash", 
+                "gemini-flash-latest",
+                "gemini-1.5-pro"
+            ]
             
-            # 4. Structure/Home Check
-            has_structure, line_count = self.detect_structure(image)
-
-            # Logic: We generally want BOTH for a "Home Garden"
-            # But specific yards might vary.
-            # Front/Back usually have House + Garden.
-            # Side might be just wall + path (Structure) or just path (Green?).
-            
-            # strict check for Greenery
-            if not has_green:
-                 return {
-                    "valid": False, 
-                    "error": f"Garden is not visible. {yard_type} must show BOTH Garden + Home. (Greenery: {green_ratio*100:.1f}%)"
-                }
-            
-            # strict check for Home/Structure
-            if not has_structure:
-                return {
-                    "valid": False,
-                    "error": f"Home/Building is not clearly visible. {yard_type} must show BOTH Garden + Home."
-                }
+            # It's safer to list models once and pick the best match
+            try:
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 
-            # Internal consistency check?
-            # For now, if both pass, we are good.
+                # Check for preferred matches in available list
+                for pref in preferred_models:
+                    for avail in available_models:
+                        if pref in avail: 
+                            return avail
+                
+                # Fallback: any 'flash' model
+                for avail in available_models:
+                    if 'flash' in avail.lower():
+                        return avail
+                
+                # Fallback: any 'pro' model
+                for avail in available_models:
+                    if 'pro' in avail.lower():
+                        return avail
+                        
+                # Last resort: first available
+                if available_models:
+                    return available_models[0]
+                    
+            except Exception as e:
+                return "gemini-1.5-flash"
             
-            return {"valid": True, "message": "OK"}
+            return "gemini-1.5-flash"
+
+        # Load image
+        image = Image.open(file_upload)
+        
+        # Construct Prompt
+        prompt = f"""
+        Analyze this image for a Home Garden validation system. 
+        The user claims this is the: {yard_type}.
+
+        Strictly evaluate the image against these rules:
+        1. MUST be a real photo. REJECT if: AI-generated, screenshot, extremely blurry, too dark, or a document.
+        2. MUST be an outdoor photo of a house/yard. REJECT if: Indoor (kitchen, bedroom), Public Park, Commercial Building.
+        3. MUST match the claimed Yard Type ({yard_type}):
+           - Front Yard: Must show front of house, main entrance, or driveway with lawn.
+           - Back Yard: Must show rear of house, patio, or backyard lawn.
+           - Side Yard: Must show narrow path between houses or side strip.
+           - REJECT if the image clearly shows a different yard type (e.g. Back Yard uploaded as Front Yard).
+        4. PROHIBITED content: REJECT if image contains prominent People, Cars, Pets (dogs/cats), or Text overlays.
+        5. COMPOSITION: REJECT if it is just a close-up of a plant/flower with no context (must show land/area). REJECT if it is just a plain wall or fence with no garden/ground.
+
+        Respond ONLY in valid JSON format:
+        {{
+            "valid": boolean,
+            "reason": "Clear explanation of why it failed (max 1 sentence).",
+            "suggestion": "Actionable advice on what to upload instead (e.g. 'Please take a photo from the street showing the whole house').",
+            "score": integer (0-100 quality score)
+        }}
+        Output JSON only.
+        """
+
+        try:
+            import time
+            from google.api_core import exceptions
+            
+            # Smart Model Selection
+            model_name = get_working_model()
+            model = genai.GenerativeModel(model_name)
+            
+            # Retry logic for Rate Limits (429)
+            max_retries = 3
+            retry_delay = 2 # start with 2 seconds
+            
+            response = None
+            last_error = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    response = model.generate_content([prompt, image])
+                    break # Success
+                except exceptions.ResourceExhausted as e:
+                    # 429 Error
+                    last_error = e
+                    if attempt < max_retries:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2 # Exponential backoff
+                    else:
+                        raise e # Re-raise after max retries
+                except Exception as e:
+                    # Other errors (e.g. 400, 500) - do not retry blindly
+                     raise e
+            
+        except Exception as e:
+             return {"valid": False, "error": f"AI Validation failed (Model: {model_name if 'model_name' in locals() else 'Unknown'}). Error: {str(e)}", "model_used": model_name if 'model_name' in locals() else 'Unknown'}
+
+        
+        try:
+            # Simple parsing (Gemini usually returns markdown json)
+            text_response = response.text.replace("```json", "").replace("```", "").strip()
+            
+            import json
+            result = json.loads(text_response)
+
+            
+            if result.get("valid") is True:
+                return {
+                    "valid": True, 
+                    "message": "OK", 
+                    "score": result.get("score", 100), 
+                    "model_used": model_name
+                }
+            else:
+                return {
+                    "valid": False, 
+                    "error": result.get("reason", "Invalid image"), 
+                    "suggestion": result.get("suggestion", "Please check the image requirements and try again."),
+                    "score": result.get("score", 0), 
+                    "model_used": model_name
+                }
 
         except Exception as e:
-            return {"valid": False, "error": f"Processing error: {str(e)}"}
+            # Reset file pointer if needed, though Image.open usually handles it.
+            file_upload.seek(0)
+            return {"valid": False, "error": f"Validation failed: {str(e)}"}
+

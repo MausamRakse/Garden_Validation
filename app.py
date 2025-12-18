@@ -30,6 +30,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<h1 class='main-header'>🏡 Home Garden Image Validation</h1>", unsafe_allow_html=True)
+
+# Sidebar for API Key
+with st.sidebar:
+    st.header("Configuration")
+    api_key = st.text_input("Enter Google Gemini API Key", type="password", help="Get your key from https://aistudio.google.com/app/apikey")
+    if not api_key:
+        st.warning("⚠️ You must enter an API Key to proceed.")
+
 st.write("Please upload clear photos of your Front, Back, and Side yards. Ensure they are outdoors and well-lit.")
 
 validator = ImageValidator()
@@ -51,16 +59,27 @@ with st.form("upload_form"):
     submitted = st.form_submit_button("Validate Images", use_container_width=True, type="primary")
 
 if submitted:
-    if not (front_img and back_img and side_img):
+    if not api_key:
+        st.error("❌ API Key is missing. Please enter it in the sidebar.")
+    elif not (front_img and back_img and side_img):
         st.error("⚠️ Please upload all 3 images to proceed.")
     else:
-        with st.spinner("Validating images..."):
+        import time
+        with st.spinner("Validating Front Yard..."):
             # Validate Front
-            front_res = validator.validate_image(front_img, "Front Yard")
+            front_res = validator.validate_image(front_img, "Front Yard", api_key)
+        
+        time.sleep(1.0) # Pause to respect Rate Limits
+        
+        with st.spinner("Validating Back Yard..."):
             # Validate Back
-            back_res = validator.validate_image(back_img, "Back Yard")
+            back_res = validator.validate_image(back_img, "Back Yard", api_key)
+
+        time.sleep(1.0) # Pause to respect Rate Limits
+
+        with st.spinner("Validating Side Yard..."):
             # Validate Side
-            side_res = validator.validate_image(side_img, "Side Yard")
+            side_res = validator.validate_image(side_img, "Side Yard", api_key)
             
             # Check Results
             all_valid = True
@@ -70,23 +89,23 @@ if submitted:
             
             # Front
             if front_res['valid']:
-                st.success("✅ Front Yard: Valid")
+                st.success(f"✅ Front Yard: Valid (Score: {front_res.get('score', 'N/A')}, Model: {front_res.get('model_used', 'N/A')})")
             else:
-                st.error(f"❌ Front Yard: {front_res['error']}")
+                st.error(f"❌ Front Yard: {front_res['error']}\n\n💡 Suggestion: {front_res.get('suggestion', '')}\n\n(Model: {front_res.get('model_used', 'N/A')})")
                 all_valid = False
 
             # Back
             if back_res['valid']:
-                st.success("✅ Back Yard: Valid")
+                st.success(f"✅ Back Yard: Valid (Score: {back_res.get('score', 'N/A')}, Model: {back_res.get('model_used', 'N/A')})")
             else:
-                st.error(f"❌ Back Yard: {back_res['error']}")
+                st.error(f"❌ Back Yard: {back_res['error']}\n\n💡 Suggestion: {back_res.get('suggestion', '')}\n\n(Model: {back_res.get('model_used', 'N/A')})")
                 all_valid = False
 
             # Side
             if side_res['valid']:
-                st.success("✅ Side Yard: Valid")
+                st.success(f"✅ Side Yard: Valid (Score: {side_res.get('score', 'N/A')}, Model: {side_res.get('model_used', 'N/A')})")
             else:
-                st.error(f"❌ Side Yard: {side_res['error']}")
+                st.error(f"❌ Side Yard: {side_res['error']}\n\n💡 Suggestion: {side_res.get('suggestion', '')}\n\n(Model: {side_res.get('model_used', 'N/A')})")
                 all_valid = False
             
             # Final Verdict
