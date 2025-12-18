@@ -9,11 +9,7 @@ class ImageValidator:
     def validate_image(self, file_upload, yard_type, api_key):
         """
         Validates image using Google Gemini API for semantic understanding.
-        Checks for:
-        1. Realness (Not AI, Not Blurry)
-        2. Content (Garden/Yard visible)
-        3. Yard Type Mismatch (Front vs Back vs Side)
-        4. Prohibited Objects (People, Cars, Pets, Interiors)
+        Checking for Realness, Content, Yard Type, Prohibited Objects.
         """
         if not api_key:
             return {"valid": False, "error": "Google Gemini API Key is missing. Please enter it in the sidebar."}
@@ -154,4 +150,3 @@ class ImageValidator:
             # Reset file pointer if needed, though Image.open usually handles it.
             file_upload.seek(0)
             return {"valid": False, "error": f"Validation failed: {str(e)}"}
-
